@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Upload Sales Report</title>
+  <style>
+    body { font: 16px/1.4 system-ui, sans-serif; margin: 24px; max-width: 640px; }
+    fieldset { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    label { display:block; margin:10px 0 6px; font-weight:600; }
+    input,button,select { font: inherit; padding:10px; width:100%; box-sizing:border-box; }
+    button { cursor:pointer; border:0; border-radius:10px; background:#0a7; color:#fff; }
+    button:disabled { opacity:.5; cursor:not-allowed }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .muted { color:#666; font-size:.9em }
+    #preview { max-width: 100%; margin-top: 8px; border:1px solid #eee; border-radius:8px }
+    #status { white-space: pre-wrap; background:#f7f7f7; padding:10px; border-radius:8px; }
+  </style>
+</head>
+<body>
+  <h1>Upload Sales Report</h1>
+  <p class="muted">Pick the <b>business date</b> the screenshot belongs to, choose the image, and upload.</p>
+
+  <form id="form">
+    <fieldset>
+      <div class="row">
+        <div>
+          <label for="date">Business date (YYYY-MM-DD)</label>
+          <input id="date" type="date" required>
+        </div>
+        <div>
+          <label for="uploader">Your name / store</label>
+          <input id="uploader" type="text" placeholder="e.g., Aman / Store-1" required>
+        </div>
+      </div>
+
+      <label for="pin">Upload PIN</label>
+      <input id="pin" type="password" placeholder="Ask owner for PIN" required>
+
+      <label for="file">Screenshot (JPG/PNG)</label>
+      <input id="file" type="file" accept="image/*" required>
+
+      <img id="preview" alt="" hidden/>
+
+      <div style="margin-top:14px">
+        <button id="btn" type="submit">Upload</button>
+      </div>
+    </fieldset>
+  </form>
+
+  <div id="status" class="muted"></div>
+
+<script>
+const PRESIGN_ENDPOINT = "https://<api-or-function-url>/sales/presign"; // <-- set this
+
+const $ = id => document.getElementById(id);
+const log = (m) => { $("status").textContent = (m || ""); };
+$("file").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return $("preview").hidden = true;
+  const url = URL.createObjectURL(f);
+  $("preview").src = url; $("preview").hidden = false;
+});
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("btn"); btn.disabled = true; log("Preparing…");
+  try {
+    const f = $("file").files[0];
+    if (!f) throw new Error("Pick a file");
+    const date = $("date").value;            // "YYYY-MM-DD"
+    const uploader = $("uploader").value.trim();
+    const pin = $("pin").value.trim();
+    const contentType = f.type || "image/jpeg";
+    const filename = f.name || "sales.jpg";
+
+    // 1) Ask backend for a presigned PUT URL
+    const presignRes = await fetch(PRESIGN_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-app-pin": pin },
+      body: JSON.stringify({ date, filename, contentType, uploader })
+    });
+    if (!presignRes.ok) {
+      const t = await presignRes.text();
+      throw new Error(`presign failed: ${presignRes.status} ${t}`);
+    }
+    const { uploadUrl, key, contentType: ct } = await presignRes.json();
+    log("Uploading to S3…");
+
+    // 2) Upload file directly to S3 via the signed URL (must set same Content-Type)
+    await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": ct }, body: f });
+
+    log(`✅ Uploaded.\nS3 key:\n${key}`);
+    $("form").reset(); $("preview").hidden = true;
+  } catch (err) {
+    log("❌ " + (err?.message || err));
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
